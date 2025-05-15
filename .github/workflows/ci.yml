@@ -1,0 +1,36 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: spinharbor, POSTGRES_PASSWORD: spinharbor, POSTGRES_DB: spinharbor }
+        ports: ['5441:5432']
+        options: >-
+          --health-cmd "pg_isready -U spinharbor" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6381:6379']
+    env:
+      DATABASE_URL: postgresql://spinharbor:spinharbor@localhost:5441/spinharbor?schema=public
+      REDIS_URL: redis://localhost:6381
+      JWT_ACCESS_SECRET: ci-access-secret-ci-access-secret-123456789
+      JWT_REFRESH_SECRET: ci-refresh-secret-ci-refresh-secret-12345678
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: cp .env.example .env
+      - run: psql postgresql://spinharbor:spinharbor@localhost:5441/spinharbor -c 'CREATE DATABASE spinharbor_test OWNER spinharbor'
+      - run: pnpm build:packages
+      - run: pnpm db:generate && pnpm db:migrate
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm test
