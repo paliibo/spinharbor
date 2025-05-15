@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #0b0b10;
+  --color-surface: #13131b;
+  --color-surface-2: #1a1a25;
+  --color-surface-3: #22222f;
+  --color-border: #272736;
+  --color-border-strong: #343448;
+  --color-text: #f2f1f7;
+  --color-muted: #9a98ad;
+  --color-muted-2: #6f6d82;
+  --color-purple: #6d3df5;
+  --color-purple-2: #8257ff;
+  --color-violet: #9b6bff;
+  --color-gold: #d4a84b;
+  --color-gold-2: #f0c66a;
+  --color-cyan: #36d6e7;
+  --color-success: #3ad28c;
+  --color-danger: #ff5c7a;
+  --color-warning: #ffb547;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --shadow-glow: 0 0 0 1px rgba(109, 61, 245, 0.35), 0 10px 40px -10px rgba(109, 61, 245, 0.45);
+  --shadow-card: 0 1px 0 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-pulse-soft: pulseSoft 2s ease-in-out infinite;
+  --animate-float: float 6s ease-in-out infinite;
+  @keyframes shimmer {
+    from { background-position: -200% 0; }
+    to { background-position: 200% 0; }
+  }
+  @keyframes pulseSoft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html { color-scheme: dark; }
+  body { background: var(--color-bg); color: var(--color-text); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+  ::selection { background: rgba(109, 61, 245, 0.45); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #2b2b3a; border-radius: 999px; border: 2px solid var(--color-bg); }
+  ::-webkit-scrollbar-track { background: transparent; }
+  input[type='number']::-webkit-inner-spin-button, input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; }
+}
+
+@utility text-balance { text-wrap: balance; }
+@utility tabular { font-variant-numeric: tabular-nums; }
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+@utility card-surface {
+  background: linear-gradient(180deg, var(--color-surface-2) 0%, var(--color-surface) 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+@utility gold-text {
+  background: linear-gradient(90deg, #f0c66a 0%, #d4a84b 50%, #f7dc9a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@utility focus-ring {
+  outline: none;
+  &:focus-visible { box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-violet); }
+}
