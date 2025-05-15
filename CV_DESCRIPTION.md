@@ -1,0 +1,10 @@
+SpinHarbor - Online Casino Platform & Game Aggregation
+Full-Stack Developer | Independent Portfolio Project
+
+* Designed and built a demo-credit iGaming platform as a TypeScript monorepo: Next.js 16 player app and operator back-office, NestJS 11 modular-monolith API (auth, wallet, ledger, games, providers, bonuses, loyalty, risk, admin, audit), PostgreSQL/Prisma, Redis/BullMQ and Socket.IO realtime, with shared Zod contracts validating requests once and generating Swagger.
+* Implemented a double-entry financial engine with BigInt minor-unit arithmetic, immutable journal entries that always sum to zero, row-level wallet locking and idempotency keys; verified with integration tests that concurrent stakes cannot double-spend and that duplicate rounds and payouts are rejected, plus a reconciliation job and endpoint.
+* Built four server-authoritative games (5×3 slots with paytable, over/under dice, European roulette, multiplayer crash with a WAITING→BETTING_OPEN→RUNNING→CRASHED→SETTLED state machine, provably-fair seed hashes and server-validated cash-outs) on pure engines with an injectable RNG, so the UI only animates server results.
+* Delivered a provider-aggregation layer (seamless-wallet style CasinoGameProvider contract, working internal provider, deliberately disabled third-party stubs) and operator tooling: KPI dashboard from persisted data, player/session/round/transaction drill-downs, catalogue and bonus management, risk flags, audited privileged actions and role-based access (SUPPORT/OPERATOR/ADMIN).
+* Added player-protection controls enforced inside the gameplay transaction (wager/loss/top-up/session limits, cooling-off, self-exclusion with realtime disconnect), a bonus/loyalty system with wagering accounting and duplicate-claim protection, and automated quality gates: 49 Jest unit/integration tests against a dedicated database and 10 Playwright end-to-end scenarios covering player-to-operator flows.
+
+Stack: TypeScript, Next.js, React, NestJS, PostgreSQL, Prisma, Redis, BullMQ, Socket.IO, Docker.
