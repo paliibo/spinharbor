@@ -1,0 +1,33 @@
+{
+  "name": "@spinharbor/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "prisma": {
+    "schema": "prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "dotenv -e ../../.env -- prisma migrate deploy",
+    "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
+    "seed": "pnpm -w build:packages && dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "reset": "dotenv -e ../../.env -- prisma migrate reset --force --skip-seed && dotenv -e ../../.env -- tsx prisma/seed.ts",
+    "studio": "dotenv -e ../../.env -- prisma studio",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "argon2": "^0.45.1",
+    "@spinharbor/engines": "workspace:*"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.3",
+    "dotenv-cli": "^11.0.0",
+    "prisma": "6.19.3",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "@types/node": "^24.10.0"
+  }
+}

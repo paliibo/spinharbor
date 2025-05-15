@@ -1,0 +1,701 @@
+// SpinHarbor data model.
+// Money is always stored as BigInt "minor units" (1 credit = 100 minor units) and never as floats.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Users & auth ─────────────────────────────
+
+enum UserRole {
+  PLAYER
+  SUPPORT
+  OPERATOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  COOLING_OFF
+  SELF_EXCLUDED
+  CLOSED
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  username     String     @unique
+  passwordHash String
+  role         UserRole   @default(PLAYER)
+  status       UserStatus @default(ACTIVE)
+  statusReason String?
+  /// For COOLING_OFF / SELF_EXCLUDED: when the restriction ends (null = indefinite).
+  statusUntil  DateTime?
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  profile        PlayerProfile?
+  wallet         Wallet?
+  loyalty        LoyaltyAccount?
+  sessions       UserSession[]
+  ledgerAccounts LedgerAccount[]
+  gameSessions   GameSession[]
+  rounds         GameRound[]
+  favorites      PlayerFavorite[]
+  recentGames    PlayerRecentGame[]
+  bonuses        PlayerBonus[]
+  limits         PlayerLimit[]
+  riskFlags      RiskFlag[]         @relation("RiskFlagSubject")
+  reviewedFlags  RiskFlag[]         @relation("RiskFlagReviewer")
+  auditActions   AuditLog[]
+  crashBets      CrashBet[]
+  notifications  Notification[]
+  loyaltyEvents  LoyaltyEvent[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model UserSession {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([userId, expiresAt])
+}
+
+model PlayerProfile {
+  userId                 String   @id
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName            String
+  avatarSeed             String
+  country                String   @default("XX")
+  soundEnabled           Boolean  @default(true)
+  /// Session-time reminder interval in minutes (0 disables).
+  sessionReminderMinutes Int      @default(60)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+// ───────────────────────────── Wallet & ledger ─────────────────────────────
+
+enum LedgerAccountType {
+  PLAYER_CASH
+  PLAYER_BONUS
+  HOUSE_FUNDING
+  HOUSE_GAMING
+  HOUSE_BONUS
+}
+
+/// A ledger account. Player accounts belong to a user; house accounts are singletons per type.
+model LedgerAccount {
+  id        String            @id @default(uuid())
+  type      LedgerAccountType
+  userId    String?
+  user      User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime          @default(now())
+  lines     JournalLine[]
+  walletCash  Wallet? @relation("WalletCashAccount")
+  walletBonus Wallet? @relation("WalletBonusAccount")
+
+  @@unique([userId, type])
+  @@index([type])
+}
+
+/// Cached, lock-protected view of the player's balances. Always equals the sum of
+/// journal lines on the corresponding ledger accounts (asserted in tests + reconcile job).
+model Wallet {
+  id                String        @id @default(uuid())
+  userId            String        @unique
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currency          String        @default("DMC")
+  balanceMinor      BigInt        @default(0)
+  bonusBalanceMinor BigInt        @default(0)
+  version           Int           @default(0)
+  cashAccountId     String        @unique
+  cashAccount       LedgerAccount @relation("WalletCashAccount", fields: [cashAccountId], references: [id])
+  bonusAccountId    String        @unique
+  bonusAccount      LedgerAccount @relation("WalletBonusAccount", fields: [bonusAccountId], references: [id])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+}
+
+enum JournalEntryType {
+  INITIAL_FUNDING
+  STAKE
+  PAYOUT
+  REFUND
+  BONUS_AWARD
+  BONUS_RELEASE
+  BONUS_FORFEIT
+  LOYALTY_REWARD
+  ADJUSTMENT
+  DEMO_RESET
+  REVERSAL
+}
+
+/// Immutable double-entry journal entry. Lines of an entry always sum to zero.
+model JournalEntry {
+  id             String           @id @default(uuid())
+  type           JournalEntryType
+  description    String
+  idempotencyKey String           @unique
+  referenceType  String?
+  referenceId    String?
+  reversalOfId   String?          @unique
+  reversalOf     JournalEntry?    @relation("Reversal", fields: [reversalOfId], references: [id])
+  reversedBy     JournalEntry?    @relation("Reversal")
+  createdById    String?
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+  lines          JournalLine[]
+  roundTransaction GameRoundTransaction?
+  playerBonus    PlayerBonus?
+
+  @@index([referenceType, referenceId])
+  @@index([createdAt])
+  @@index([type, createdAt])
+}
+
+model JournalLine {
+  id                String        @id @default(uuid())
+  entryId           String
+  entry             JournalEntry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  accountId         String
+  account           LedgerAccount @relation(fields: [accountId], references: [id])
+  /// Signed amount: positive increases the account balance, negative decreases it.
+  amountMinor       BigInt
+  /// Running balance of the account after this line (only populated for player accounts).
+  balanceAfterMinor BigInt?
+  createdAt         DateTime      @default(now())
+
+  @@index([accountId, createdAt])
+  @@index([entryId])
+}
+
+// ───────────────────────────── Catalogue ─────────────────────────────
+
+enum ProviderIntegrationType {
+  INTERNAL
+  SEAMLESS_WALLET
+  TRANSFER_WALLET
+}
+
+enum ProviderStatus {
+  OPERATIONAL
+  DISABLED
+  ERROR
+  NOT_CONFIGURED
+}
+
+model CasinoProvider {
+  id              String                  @id @default(uuid())
+  code            String                  @unique
+  name            String
+  integrationType ProviderIntegrationType
+  status          ProviderStatus          @default(NOT_CONFIGURED)
+  description     String?
+  config          Json                    @default("{}")
+  lastSyncAt      DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  games           CasinoGame[]
+  sessions        GameSession[]
+  errors          ProviderErrorLog[]
+}
+
+model ProviderErrorLog {
+  id         String         @id @default(uuid())
+  providerId String
+  provider   CasinoProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  message    String
+  context    Json?
+  createdAt  DateTime       @default(now())
+
+  @@index([providerId, createdAt])
+}
+
+enum GameEngine {
+  SLOTS
+  DICE
+  ROULETTE
+  CRASH
+  DEMO_PREVIEW
+}
+
+enum GameStatus {
+  ACTIVE
+  DISABLED
+  MAINTENANCE
+  COMING_SOON
+}
+
+enum Volatility {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model GameCategory {
+  id          String               @id @default(uuid())
+  slug        String               @unique
+  name        String
+  description String?
+  icon        String?
+  sortOrder   Int                  @default(0)
+  games       CasinoGameCategory[]
+}
+
+model CasinoGame {
+  id          String         @id @default(uuid())
+  slug        String         @unique
+  name        String
+  tagline     String?
+  description String
+  providerId  String
+  provider    CasinoProvider @relation(fields: [providerId], references: [id])
+  engine      GameEngine
+  status      GameStatus     @default(ACTIVE)
+  volatility  Volatility     @default(MEDIUM)
+  /// Informational label only (e.g. "96.1%"); not a certified RTP.
+  rtpLabel    String?
+  minBetMinor BigInt         @default(10)
+  maxBetMinor BigInt         @default(100000)
+  /// Original procedural artwork description (palette + motif) rendered client-side.
+  artwork     Json
+  isFeatured  Boolean        @default(false)
+  isNew       Boolean        @default(false)
+  sortOrder   Int            @default(0)
+  releasedAt  DateTime       @default(now())
+  playCount   Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  categories CasinoGameCategory[]
+  sessions   GameSession[]
+  rounds     GameRound[]
+  favorites  PlayerFavorite[]
+  recents    PlayerRecentGame[]
+
+  @@index([status, sortOrder])
+  @@index([providerId])
+  @@index([engine])
+}
+
+model CasinoGameCategory {
+  gameId     String
+  game       CasinoGame   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  categoryId String
+  category   GameCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, categoryId])
+  @@index([categoryId])
+}
+
+model PlayerFavorite {
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId    String
+  game      CasinoGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@id([userId, gameId])
+}
+
+model PlayerRecentGame {
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId       String
+  game         CasinoGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  lastPlayedAt DateTime   @default(now())
+
+  @@id([userId, gameId])
+  @@index([userId, lastPlayedAt])
+}
+
+// ───────────────────────────── Gameplay ─────────────────────────────
+
+enum GameSessionStatus {
+  ACTIVE
+  CLOSED
+  EXPIRED
+}
+
+model GameSession {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gameId           String
+  game             CasinoGame        @relation(fields: [gameId], references: [id])
+  providerId       String
+  provider         CasinoProvider    @relation(fields: [providerId], references: [id])
+  status           GameSessionStatus @default(ACTIVE)
+  token            String            @unique
+  startedAt        DateTime          @default(now())
+  lastActivityAt   DateTime          @default(now())
+  closedAt         DateTime?
+  roundsCount      Int               @default(0)
+  totalStakedMinor BigInt            @default(0)
+  totalPaidMinor   BigInt            @default(0)
+  rounds           GameRound[]
+
+  @@index([userId, status])
+  @@index([gameId, startedAt])
+  @@index([status, lastActivityAt])
+}
+
+enum GameRoundStatus {
+  OPEN
+  SETTLED
+  VOIDED
+}
+
+model GameRound {
+  id             String          @id @default(uuid())
+  sessionId      String
+  session        GameSession     @relation(fields: [sessionId], references: [id])
+  userId         String
+  user           User            @relation(fields: [userId], references: [id])
+  gameId         String
+  game           CasinoGame      @relation(fields: [gameId], references: [id])
+  engine         GameEngine
+  status         GameRoundStatus @default(OPEN)
+  stakeMinor     BigInt
+  payoutMinor    BigInt          @default(0)
+  /// Portion of the stake funded from bonus balance.
+  bonusStakeMinor BigInt         @default(0)
+  input          Json
+  result         Json?
+  /// SHA-256 of the server RNG seed used for this round (transparency, not certification).
+  rngSeedHash    String?
+  idempotencyKey String          @unique
+  createdAt      DateTime        @default(now())
+  settledAt      DateTime?
+  transactions   GameRoundTransaction[]
+  crashBet       CrashBet?
+  loyaltyEvent   LoyaltyEvent?
+
+  @@index([userId, createdAt])
+  @@index([gameId, createdAt])
+  @@index([createdAt])
+  @@index([sessionId])
+  @@index([status])
+}
+
+enum RoundTransactionType {
+  STAKE
+  PAYOUT
+  REFUND
+}
+
+model GameRoundTransaction {
+  id             String               @id @default(uuid())
+  roundId        String
+  round          GameRound            @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  type           RoundTransactionType
+  amountMinor    BigInt
+  journalEntryId String               @unique
+  journalEntry   JournalEntry         @relation(fields: [journalEntryId], references: [id])
+  createdAt      DateTime             @default(now())
+
+  @@index([roundId])
+}
+
+// ───────────────────────────── Crash (multiplayer, server-driven) ─────────────────────────────
+
+enum CrashRoundStatus {
+  WAITING
+  BETTING_OPEN
+  RUNNING
+  CRASHED
+  SETTLED
+}
+
+model CrashRound {
+  id                 String           @id @default(uuid())
+  seq                Int              @unique @default(autoincrement())
+  status             CrashRoundStatus @default(WAITING)
+  /// Crash point in basis points (24500 = 2.45x). Hidden until the round crashes.
+  crashMultiplierBp  Int
+  serverSeedHash     String
+  serverSeed         String?
+  bettingOpensAt     DateTime
+  startsAt           DateTime
+  crashedAt          DateTime?
+  settledAt          DateTime?
+  createdAt          DateTime         @default(now())
+  bets               CrashBet[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum CrashBetStatus {
+  PLACED
+  CASHED_OUT
+  LOST
+  REFUNDED
+}
+
+model CrashBet {
+  id                 String         @id @default(uuid())
+  crashRoundId       String
+  crashRound         CrashRound     @relation(fields: [crashRoundId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User           @relation(fields: [userId], references: [id])
+  gameRoundId        String         @unique
+  gameRound          GameRound      @relation(fields: [gameRoundId], references: [id])
+  stakeMinor         BigInt
+  /// Recorded before the round starts; server auto-cashes at this multiplier.
+  autoCashoutBp      Int?
+  status             CrashBetStatus @default(PLACED)
+  cashoutMultiplierBp Int?
+  cashedOutAt        DateTime?
+  payoutMinor        BigInt         @default(0)
+  createdAt          DateTime       @default(now())
+
+  @@unique([crashRoundId, userId])
+  @@index([userId, createdAt])
+}
+
+// ───────────────────────────── Promotions, bonuses, loyalty ─────────────────────────────
+
+enum BonusType {
+  WELCOME
+  DAILY_REWARD
+  CASHBACK
+  LOYALTY_MILESTONE
+}
+
+model BonusDefinition {
+  id                 String       @id @default(uuid())
+  code               String       @unique
+  type               BonusType
+  name               String
+  description        String
+  /// Fixed award amount (WELCOME, DAILY_REWARD, LOYALTY_MILESTONE).
+  amountMinor        BigInt       @default(0)
+  /// Cashback percentage in basis points of eligible net losses (CASHBACK only).
+  percentBp          Int?
+  maxAmountMinor     BigInt?
+  /// Wagering multiplier applied to the awarded amount (0 = none; funds go to cash).
+  wageringMultiplier Int          @default(0)
+  /// Minimum hours between claims per player (DAILY_REWARD = 24).
+  claimCooldownHours Int?
+  maxClaimsPerUser   Int?
+  validForHours      Int          @default(168)
+  requiredTier       LoyaltyTier?
+  isActive           Boolean      @default(true)
+  config             Json         @default("{}")
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  claims             PlayerBonus[]
+  promotions         Promotion[]
+}
+
+enum PlayerBonusStatus {
+  ACTIVE
+  COMPLETED
+  EXPIRED
+  FORFEITED
+}
+
+model PlayerBonus {
+  id                     String            @id @default(uuid())
+  userId                 String
+  user                   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  definitionId           String
+  definition             BonusDefinition   @relation(fields: [definitionId], references: [id])
+  status                 PlayerBonusStatus @default(ACTIVE)
+  amountMinor            BigInt
+  wageringRequiredMinor  BigInt            @default(0)
+  wageringProgressMinor  BigInt            @default(0)
+  /// Deterministic key preventing duplicate claims (e.g. userId:code or userId:code:2026-10-27).
+  claimKey               String            @unique
+  claimedAt              DateTime          @default(now())
+  expiresAt              DateTime
+  completedAt            DateTime?
+  journalEntryId         String?           @unique
+  journalEntry           JournalEntry?     @relation(fields: [journalEntryId], references: [id])
+
+  @@index([userId, status])
+  @@index([definitionId])
+  @@index([status, expiresAt])
+}
+
+model Promotion {
+  id                String           @id @default(uuid())
+  slug              String           @unique
+  title             String
+  subtitle          String?
+  description       String
+  /// Procedural banner artwork (palette, motif) rendered client-side.
+  artwork           Json
+  ctaLabel          String           @default("Learn more")
+  bonusDefinitionId String?
+  bonusDefinition   BonusDefinition? @relation(fields: [bonusDefinitionId], references: [id])
+  startsAt          DateTime
+  endsAt            DateTime?
+  isActive          Boolean          @default(true)
+  sortOrder         Int              @default(0)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+enum LoyaltyTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+model LoyaltyAccount {
+  userId         String      @id
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  points         BigInt      @default(0)
+  lifetimePoints BigInt      @default(0)
+  tier           LoyaltyTier @default(BRONZE)
+  tierUpdatedAt  DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+/// One loyalty award per round (unique roundId) makes point accrual idempotent.
+model LoyaltyEvent {
+  id        String     @id @default(uuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roundId   String?    @unique
+  round     GameRound? @relation(fields: [roundId], references: [id])
+  points    Int
+  reason    String
+  createdAt DateTime   @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ───────────────────────────── Responsible gaming & risk ─────────────────────────────
+
+enum PlayerLimitType {
+  DAILY_WAGER
+  WEEKLY_WAGER
+  DAILY_LOSS
+  DAILY_TOPUP
+  SESSION_MINUTES
+}
+
+model PlayerLimit {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      PlayerLimitType
+  /// Minor units for money limits, minutes for SESSION_MINUTES.
+  value     BigInt
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([userId, type])
+}
+
+enum RiskSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RiskFlagStatus {
+  OPEN
+  REVIEWED
+  DISMISSED
+}
+
+model RiskFlag {
+  id           String         @id @default(uuid())
+  userId       String
+  user         User           @relation("RiskFlagSubject", fields: [userId], references: [id], onDelete: Cascade)
+  code         String
+  severity     RiskSeverity
+  status       RiskFlagStatus @default(OPEN)
+  description  String
+  metadata     Json?
+  createdAt    DateTime       @default(now())
+  reviewedById String?
+  reviewedBy   User?          @relation("RiskFlagReviewer", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+  resolution   String?
+
+  @@index([userId, status])
+  @@index([status, severity, createdAt])
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorRole  UserRole?
+  action     String
+  targetType String
+  targetId   String?
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+  @@index([action])
+}
+
+/// Stores the response of financial mutation requests so that retries with the same key
+/// return the original result instead of re-executing.
+model IdempotencyRecord {
+  key          String   @id
+  userId       String
+  scope        String
+  requestHash  String
+  statusCode   Int
+  responseBody Json
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([expiresAt])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
