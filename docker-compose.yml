@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: spinharbor-postgres
+    environment:
+      POSTGRES_USER: spinharbor
+      POSTGRES_PASSWORD: spinharbor
+      POSTGRES_DB: spinharbor
+    ports:
+      - "${POSTGRES_PORT:-5441}:5432"
+    volumes:
+      - spinharbor_pg:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spinharbor"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    container_name: spinharbor-redis
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "${REDIS_PORT:-6381}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  spinharbor_pg:
