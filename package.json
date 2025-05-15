@@ -1,0 +1,32 @@
+{
+  "name": "spinharbor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SpinHarbor - demo-credit online casino platform & game aggregation showcase",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm build:packages && pnpm -r --parallel --filter \"./apps/*\" dev",
+    "dev:api": "pnpm --filter @spinharbor/api dev",
+    "dev:web": "pnpm --filter @spinharbor/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @spinharbor/api test",
+    "test:e2e": "pnpm --filter @spinharbor/web test:e2e",
+    "db:generate": "pnpm --filter @spinharbor/database generate",
+    "db:migrate": "pnpm --filter @spinharbor/database migrate",
+    "db:seed": "pnpm --filter @spinharbor/database seed",
+    "db:reset": "pnpm --filter @spinharbor/database reset",
+    "db:studio": "pnpm --filter @spinharbor/database studio",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json,yml,yaml,css}\"",
+    "build:packages": "pnpm --filter \"./packages/*\" build",
+    "verify": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "typescript": "~5.9.3"
+  }
+}
